@@ -1,0 +1,95 @@
+import uuid
+from cryptography.fernet import Fernet
+from django.conf import settings
+from django.db import models
+from django.db.models import Q, F
+
+class Order(models.Model):
+    class Status(models.TextChoices):
+        DRAFT = "draft", "Rascunho"
+        AWAITING_PAYMENT = "awaiting_payment", "Aguardando pagamento"
+        PAID = "paid", "Pagamento confirmado"
+        ISSUING = "issuing", "Em emissão"
+        ISSUED = "issued", "Apólice emitida"
+        FAILED = "failed", "Falha na emissão"
+        CANCELLED = "cancelled", "Cancelado"
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    reference = models.CharField(max_length=20, unique=True, editable=False)
+    customer_name = models.CharField(max_length=150)
+    customer_email = models.EmailField()
+    destination = models.CharField(max_length=100)
+    plan_name = models.CharField(max_length=150)
+    plan_id = models.PositiveIntegerField(null=True, blank=True)
+    vetra_quote_id = models.PositiveIntegerField(null=True, blank=True)
+    vetra_quote_plan_id = models.PositiveIntegerField(null=True, blank=True)
+    departure = models.DateField()
+    return_date = models.DateField()
+    currency = models.CharField(max_length=3, choices=[("BRL", "BRL"), ("USD", "USD"), ("EUR", "EUR"), ("XXX", "Moeda a confirmar")])
+    total = models.DecimalField(max_digits=12, decimal_places=2)
+    original_total = models.DecimalField(max_digits=16, decimal_places=6, null=True, blank=True)
+    original_currency = models.CharField(max_length=3, blank=True)
+    exchange_rate = models.DecimalField(max_digits=16, decimal_places=8, null=True, blank=True)
+    exchange_date = models.DateField(null=True, blank=True)
+    exchange_id = models.PositiveIntegerField(null=True, blank=True)
+    exchange_field = models.CharField(max_length=30, blank=True)
+    exchange_fetched_at = models.DateTimeField(null=True, blank=True)
+    payment_method = models.CharField(max_length=10, choices=[("pix", "Pix"), ("card", "Cartão")])
+    status = models.CharField(max_length=24, choices=Status.choices, default=Status.DRAFT, db_index=True)
+    source = models.CharField(max_length=20, default="manual")
+    is_demo = models.BooleanField(default=False, db_index=True)
+    created_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT, null=True)
+    checkout_key = models.UUIDField(null=True, unique=True, editable=False)
+    checkout_hash = models.CharField(max_length=64, blank=True, editable=False)
+    created_at = models.DateTimeField(auto_now_add=True, db_index=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+        permissions = [("export_orders", "Exportar relatórios de pedidos"), ("cancel_order", "Cancelar pedidos sem pagamento")]
+        constraints = [models.CheckConstraint(condition=Q(total__gte=0), name="order_nonnegative_total"), models.CheckConstraint(condition=Q(return_date__gte=F("departure")), name="order_valid_period")]
+
+    def save(self, *args, **kwargs):
+        if not self.reference:
+            self.reference = "VT-" + self.id.hex[:12].upper()
+        super().save(*args, **kwargs)
+
+    def __str__(self):
+        return self.reference
+
+class Passenger(models.Model):
+    order = models.ForeignKey(Order, related_name="passengers", on_delete=models.CASCADE)
+    full_name = models.CharField(max_length=150)
+    age = models.PositiveSmallIntegerField()
+    cpf_encrypted = models.TextField()
+    unit_price = models.DecimalField(max_digits=12, decimal_places=2)
+
+    class Meta:
+        constraints = [models.CheckConstraint(condition=Q(age__lte=120), name="passenger_valid_age"), models.CheckConstraint(condition=Q(unit_price__gte=0), name="passenger_nonnegative_price")]
+
+    def set_cpf(self, value):
+        self.cpf_encrypted = Fernet(settings.CPF_ENCRYPTION_KEY.encode()).encrypt(value.encode()).decode()
+
+    @property
+    def cpf_masked(self):
+        cpf = Fernet(settings.CPF_ENCRYPTION_KEY.encode()).decrypt(self.cpf_encrypted.encode()).decode()
+        return "***.***.***-" + cpf[-2:]
+
+class OrderEvent(models.Model):
+    order = models.ForeignKey(Order, related_name="events", on_delete=models.CASCADE)
+    actor = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, on_delete=models.SET_NULL)
+    action = models.CharField(max_length=40)
+    description = models.CharField(max_length=250)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-created_at", "-id"]
+
+class ProcessingJob(models.Model):
+    order = models.ForeignKey(Order, related_name="jobs", on_delete=models.PROTECT)
+    idempotency_key = models.CharField(max_length=100, unique=True)
+    status = models.CharField(max_length=16, default="blocked")
+    attempts = models.PositiveIntegerField(default=0)
+    provider_reference = models.CharField(max_length=100, blank=True)
+    last_error = models.CharField(max_length=250, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)

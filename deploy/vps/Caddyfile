@@ -1,0 +1,13 @@
+{
+    email {$TLS_EMAIL}
+}
+
+{$SITE_DOMAIN} {
+    encode zstd gzip
+    reverse_proxy cotador:3000
+}
+
+{$OPS_DOMAIN} {
+    encode zstd gzip
+    reverse_proxy operations:8080
+}

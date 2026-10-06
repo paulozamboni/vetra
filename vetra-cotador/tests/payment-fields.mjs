@@ -1,0 +1,10 @@
+import assert from 'node:assert/strict';
+import {readFileSync,writeFileSync,mkdirSync} from 'node:fs';
+import ts from 'typescript';
+mkdirSync('.sites-runtime',{recursive:true});
+writeFileSync('.sites-runtime/payment-fields.check.mjs',ts.transpileModule(readFileSync('lib/payment-fields.ts','utf8'),{compilerOptions:{module:ts.ModuleKind.ESNext,target:ts.ScriptTarget.ES2022}}).outputText);
+const f=await import('../.sites-runtime/payment-fields.check.mjs');
+assert.equal(f.maskCpf('52998224725'),'529.982.247-25');assert(f.validCpf('529.982.247-25'));assert(!f.validCpf('529.982.247-26'));assert(!f.validCpf('111.111.111-11'));assert(!f.validCpf('123'));
+assert.equal(f.maskCardNumber('4111111111111111'),'4111 1111 1111 1111');assert(f.validCardNumber('4111 1111 1111 1111'));assert(!f.validCardNumber('4111111111111112'));assert(!f.validCardNumber('0000000000000000'));assert.equal(f.maskCardNumber('378282246310005'),'3782 822463 10005');assert(f.validCardNumber('378282246310005'));
+assert.equal(f.maskExpiry('1230'),'12/30');const now=new Date(2026,9,2);assert(f.validExpiry('10/26',now));assert(!f.validExpiry('09/26',now));assert(!f.validExpiry('13/30',now));assert(!f.validExpiry('1/30',now));assert(f.validCvv('123','4111111111111111'));assert(!f.validCvv('1234','4111111111111111'));assert(f.validCvv('1234','378282246310005'));
+console.log('Payment fields: CPF check digits, PAN checksums, Amex masks, expiry boundaries and CVV lengths passed.');

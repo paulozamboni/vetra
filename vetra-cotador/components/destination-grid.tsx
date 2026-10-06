@@ -1,0 +1,5 @@
+import { Globe2 } from "lucide-react";
+import { destinations } from "@/lib/destinations";
+export function DestinationGrid() {
+  return <section className="destinations-section" id="destinos" aria-labelledby="destinations-title"><div className="section-heading"><span className="eyebrow">PARA ONDE VAMOS?</span><h2 id="destinations-title">Um mundo de destinos. Sua viagem protegida.</h2><p>Escolha o continente e explore a proteção para o seu roteiro.</p></div><div className="destinations-grid">{destinations.map(destination => <a className="destination-card continent-card" key={destination.slug} href={`/seguro-viagem/${destination.slug}`}><div className="continent-art"><img src={destination.image} alt={destination.imageAlt} width={640} height={420} loading="lazy" decoding="async"/><span className="continent-label"><Globe2 size={14}/>EXPLORE O CONTINENTE</span></div><div className="continent-copy"><span className="continent-kicker">SEGURO VIAGEM</span><h3>{destination.name}</h3><p>{destination.subtitle}</p><span className="destination-link">Explorar {destination.name}</span></div></a>)}</div></section>;
+}

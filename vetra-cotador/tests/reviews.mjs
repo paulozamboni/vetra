@@ -1,0 +1,31 @@
+import assert from "node:assert/strict";
+import { readFile, writeFile, mkdir } from "node:fs/promises";
+import ts from "typescript";
+const source = await readFile(new URL("../app/api/reviews/route.ts", import.meta.url), "utf8");
+const output = ts.transpileModule(source.replace("@/lib/site-config", "../lib/site-config.ts").replace("@/lib/server-env", "../lib/server-env.ts"), { compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 } }).outputText;
+await mkdir(new URL("../.sites-runtime/", import.meta.url), { recursive: true });
+const moduleUrl = new URL("../.sites-runtime/reviews-check.mjs", import.meta.url);
+await writeFile(moduleUrl, output);
+const keys = ["GOOGLE_BUSINESS_ACCOUNT_ID", "GOOGLE_BUSINESS_LOCATION_ID", "GOOGLE_OAUTH_CLIENT_ID", "GOOGLE_OAUTH_CLIENT_SECRET", "GOOGLE_OAUTH_REFRESH_TOKEN"];
+for (const key of keys) delete process.env[key];
+const { GET } = await import(moduleUrl.href);
+assert.deepEqual(await (await GET()).json(), { status: "not_configured" });
+for (const key of keys) process.env[key] = "test-secret";
+process.env.GOOGLE_BUSINESS_ACCOUNT_ID = "123";
+process.env.GOOGLE_BUSINESS_LOCATION_ID = "456";
+let calls = 0;
+globalThis.fetch = async (url, options) => {
+  calls++;
+  if (String(url).includes("oauth2")) { assert.equal(options.method, "POST"); return Response.json({ access_token: "test-access-token" }); }
+  assert.equal(options.headers.Authorization, "Bearer test-access-token");
+  return Response.json({ averageRating: 4.5, totalReviewCount: 2, reviews: [{ reviewId: "a", reviewer: { displayName: "Pessoa de teste" }, starRating: "FOUR", comment: "Comentário de teste", createTime: "2026-10-01T12:00:00Z" }, { reviewId: "b", reviewer: { isAnonymous: true }, starRating: "FIVE", createTime: "2026-10-02T12:00:00Z" }] });
+};
+const ready = await (await GET()).json();
+assert.equal(ready.status, "ready"); assert.equal(ready.average, 4.5); assert.equal(ready.count, 2);
+assert.equal(ready.reviews[0].rating, 4); assert.equal(ready.reviews[1].author, "Viajante");
+assert.equal(ready.profileUrl, "https://share.google/alVITkMyfcTc3jcEa");
+await GET(); assert.equal(calls, 2, "Successful responses should reuse the five minute cache");
+globalThis.fetch = async () => new Response("denied", { status: 401 });
+const failure = await (await import(moduleUrl.href + "?failure")).GET();
+assert.equal(failure.status, 503); assert.deepEqual(await failure.json(), { status: "unavailable" });
+console.log("Reviews: missing configuration, OAuth mapping, anonymity, cache and upstream failure passed.");

@@ -1,0 +1,141 @@
+name: vetra
+
+x-operations: &operations
+  image: vetra-operations:local
+  build: ./vetra-operacoes
+  init: true
+  environment: &operations-env
+    DEBUG: "0"
+    DJANGO_SECRET_KEY: ${DJANGO_SECRET_KEY:?Gere os secrets em deploy/vps/.env}
+    CPF_ENCRYPTION_KEY: ${CPF_ENCRYPTION_KEY:?Configure CPF_ENCRYPTION_KEY}
+    CHECKOUT_INGEST_TOKEN: ${CHECKOUT_INGEST_TOKEN:?Configure CHECKOUT_INGEST_TOKEN}
+    DATABASE_URL: postgresql://vetra:${POSTGRES_PASSWORD:?Configure POSTGRES_PASSWORD}@postgres:5432/vetra
+    REDIS_URL: redis://redis:6379/0
+    ALLOWED_HOSTS: ${OPS_DOMAIN:?Configure OPS_DOMAIN},operations,localhost,127.0.0.1
+    CSRF_TRUSTED_ORIGINS: https://${OPS_DOMAIN}
+    TRUST_PROXY_HEADERS: "1"
+  networks: [backend, edge]
+  security_opt: [no-new-privileges:true]
+  logging: &logging
+    driver: json-file
+    options: {max-size: "10m", max-file: "3"}
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: vetra
+      POSTGRES_USER: vetra
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Configure POSTGRES_PASSWORD}
+    volumes: [postgres_data:/var/lib/postgresql/data]
+    networks: [backend]
+    healthcheck:
+      test: [CMD-SHELL, "pg_isready -U vetra -d vetra"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    logging: *logging
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: [redis-server, --appendonly, "yes"]
+    volumes: [redis_data:/data]
+    networks: [backend]
+    healthcheck:
+      test: [CMD, redis-cli, ping]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    logging: *logging
+
+  migrate:
+    <<: *operations
+    restart: "no"
+    command: [sh, -c, "python manage.py migrate --noinput && python manage.py setup_roles && python manage.py check --deploy --fail-level WARNING"]
+    depends_on:
+      postgres: {condition: service_healthy}
+      redis: {condition: service_healthy}
+
+  operations:
+    <<: *operations
+    restart: unless-stopped
+    command: [gunicorn, config.wsgi:application, --bind, "0.0.0.0:8080", --workers, "2", --timeout, "60", --access-logfile, "-", --error-logfile, "-"]
+    depends_on:
+      migrate: {condition: service_completed_successfully}
+    healthcheck:
+      test: [CMD, python, -c, "import urllib.request; urllib.request.urlopen('http://localhost:8080/healthz/', timeout=5)"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+  worker:
+    <<: *operations
+    restart: unless-stopped
+    command: [celery, -A, config, worker, --loglevel=info, --concurrency=2]
+    depends_on:
+      migrate: {condition: service_completed_successfully}
+
+  cotador:
+    build: ./vetra-cotador
+    image: vetra-cotador:local
+    restart: unless-stopped
+    init: true
+    environment:
+      NODE_ENV: production
+      VETRA_DEPLOY_TARGET: node
+      PORT: "3000"
+      HOST: 0.0.0.0
+      VINEXT_TRUSTED_HOSTS: ${SITE_DOMAIN:?Configure SITE_DOMAIN}
+      VETRA_API_LOGIN: ${VETRA_API_LOGIN:?Configure o login da API Vetra}
+      VETRA_API_PASSWORD: ${VETRA_API_PASSWORD:?Configure a senha da API Vetra}
+      VETRA_OPERATIONS_URL: http://operations:8080
+      VETRA_OPERATIONS_TOKEN: ${CHECKOUT_INGEST_TOKEN:?Configure CHECKOUT_INGEST_TOKEN}
+      GOOGLE_BUSINESS_PROFILE_URL: ${GOOGLE_BUSINESS_PROFILE_URL:-}
+      GOOGLE_BUSINESS_ACCOUNT_ID: ${GOOGLE_BUSINESS_ACCOUNT_ID:-}
+      GOOGLE_BUSINESS_LOCATION_ID: ${GOOGLE_BUSINESS_LOCATION_ID:-}
+      GOOGLE_OAUTH_CLIENT_ID: ${GOOGLE_OAUTH_CLIENT_ID:-}
+      GOOGLE_OAUTH_CLIENT_SECRET: ${GOOGLE_OAUTH_CLIENT_SECRET:-}
+      GOOGLE_OAUTH_REFRESH_TOKEN: ${GOOGLE_OAUTH_REFRESH_TOKEN:-}
+    networks: [backend, edge]
+    depends_on:
+      operations: {condition: service_healthy}
+    healthcheck:
+      test: [CMD, node, -e, "fetch('http://localhost:3000/').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    security_opt: [no-new-privileges:true]
+    logging: *logging
+
+  proxy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    environment:
+      SITE_DOMAIN: ${SITE_DOMAIN:?Configure SITE_DOMAIN}
+      OPS_DOMAIN: ${OPS_DOMAIN:?Configure OPS_DOMAIN}
+      TLS_EMAIL: ${TLS_EMAIL:?Configure TLS_EMAIL}
+    ports: ["80:80", "443:443", "443:443/udp"]
+    volumes:
+      - ./deploy/vps/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    networks: [backend, edge]
+    depends_on:
+      cotador: {condition: service_healthy}
+      operations: {condition: service_healthy}
+    logging: *logging
+
+networks:
+  backend:
+    internal: true
+  edge:
+
+volumes:
+  postgres_data:
+  redis_data:
+  caddy_data:
+  caddy_config:

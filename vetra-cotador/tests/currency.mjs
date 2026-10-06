@@ -1,0 +1,13 @@
+import assert from 'node:assert/strict';
+import {readFileSync,writeFileSync,mkdirSync} from 'node:fs';
+import ts from 'typescript';
+mkdirSync('.sites-runtime',{recursive:true});
+writeFileSync('.sites-runtime/currency.check.mjs',ts.transpileModule(readFileSync('lib/currency.ts','utf8'),{compilerOptions:{module:ts.ModuleKind.ESNext,target:ts.ScriptTarget.ES2022}}).outputText);
+const {usdToBrl}=await import('../.sites-runtime/currency.check.mjs');
+assert.equal(usdToBrl('29.23','5.22'),152.58);
+assert.equal(usdToBrl('123.45','5.22'),644.41);
+assert.equal(usdToBrl('1.005','1'),1.01);
+assert.equal(usdToBrl('0.1','0.15'),0.02);
+assert.equal(usdToBrl('1','5.12345678'),5.12);
+assert.throws(()=>usdToBrl(1,0));assert.throws(()=>usdToBrl(1,-1));assert.throws(()=>usdToBrl(1,'NaN'));
+console.log('Currency: exact decimals, cents, half-up rounding, rate precision and invalid rates passed.');
