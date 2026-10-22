@@ -23,7 +23,7 @@ class EventInline(ReadOnlyInline):
 class OrderAdmin(admin.ModelAdmin):
     list_display = ["reference", "customer_name", "destination", "status", "currency", "total", "is_demo", "created_at"]
     list_filter = ["is_demo", "status", "currency", "destination"]
-    search_fields = ["reference", "customer_name", "customer_email"]
+    search_fields = ["reference", "customer_name", "customer_email", "payer_email"]
     readonly_fields = [field.name for field in Order._meta.fields]
     inlines = [PassengerInline, EventInline]
     def has_add_permission(self, request):

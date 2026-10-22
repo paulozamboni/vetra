@@ -1,0 +1,13 @@
+import assert from 'node:assert/strict';
+import {readFile} from 'node:fs/promises';
+import ts from 'typescript';
+const source=await readFile(new URL('../lib/payment-prices.ts',import.meta.url),'utf8');
+const {outputText}=ts.transpileModule(source,{compilerOptions:{module:ts.ModuleKind.ESNext,target:ts.ScriptTarget.ES2022}});
+const {paymentPrices}=await import('data:text/javascript;base64,'+Buffer.from(outputText).toString('base64'));
+const terms=(pix,card='0.00')=>({pix:{percent:pix},options:[{installments:1,interest_percent:card}]});
+assert.deepEqual(paymentPrices(401.60,terms('5.00')),{pix:381.52,card:401.60,discountPercent:5});
+assert.deepEqual(paymentPrices(150.25,terms('10.00','2.50')),{pix:135.22,card:154.01,discountPercent:10});
+assert.equal(paymentPrices(0.10,terms('5.00')).pix,0.09);
+assert.equal(paymentPrices(401.60,terms('0.00')).pix,401.60);
+assert.equal(paymentPrices(401.60,terms('100.00')).pix,0);
+console.log('Pix and card prices: configured rates, half-up rounding and limits passed.');

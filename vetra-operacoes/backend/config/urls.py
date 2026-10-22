@@ -6,6 +6,8 @@ from django.views.decorators.cache import never_cache
 from rest_framework.routers import DefaultRouter
 from orders.views import SessionView, LoginView, LogoutView, OrderViewSet, SummaryView
 from orders.checkout import CheckoutIngestView
+from orders.installments import InstallmentSettingsView, CheckoutInstallmentsView
+from orders.coupons import CouponAdminView, CheckoutCouponView
 from django.http import JsonResponse
 from django.db import connection
 from django.core.cache import cache
@@ -32,6 +34,11 @@ def dashboard(request):
 urlpatterns = [path("admin/", admin.site.urls), path("api/session/", SessionView.as_view()), path("api/login/", LoginView.as_view()), path("api/logout/", LogoutView.as_view()), path("api/summary/", SummaryView.as_view()), path("api/", include(router.urls)), path("", dashboard)]
 admin.site.site_header = "Vetra · Administração"
 urlpatterns.insert(0, path("api/checkout/orders/", CheckoutIngestView.as_view()))
+urlpatterns.insert(0, path('api/settings/installments/', InstallmentSettingsView.as_view()))
+urlpatterns.insert(0, path('api/coupons/', CouponAdminView.as_view()))
+urlpatterns.insert(0, path('api/coupons/<int:pk>/', CouponAdminView.as_view()))
+urlpatterns.insert(0, path('api/checkout/coupons/validate/', CheckoutCouponView.as_view()))
+urlpatterns.insert(0, path('api/checkout/installments/', CheckoutInstallmentsView.as_view()))
 urlpatterns.insert(0, path('healthz/', healthz))
 admin.site.site_title = "Vetra"
 admin.site.index_title = "Equipe e permissões"

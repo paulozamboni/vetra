@@ -109,3 +109,40 @@ A moeda da tarifa da Vetra foi confirmada como USD. O cotador consulta `/cambio/
 Preços de venda são exibidos em BRL no B2C. Limites de cobertura mantêm suas moedas contratuais. Cada pedido novo guarda `original_total` em USD, `total` em BRL, `exchange_rate`, `exchange_date`, `exchange_id`, `exchange_field=cambio_ita` e `exchange_fetched_at`. Lista, detalhes e CSV mostram o registro da conversão. O cálculo usa decimal exato e arredondamento HALF_UP em centavos; o Django confere a fórmula e a soma dos passageiros. Taxa e valores registrados não mudam com futuras cotações. Campos de cotação transitórios não quebram a deduplicação de reenvios.
 
 Validação atual: 21 testes Django, testes de conversão decimal, API Vetra e checkout, build do dashboard e TypeScript do B2C. Nenhuma cobrança, pagamento ou emissão é realizada.
+
+
+## Processamento interno de pedidos
+
+A ação “Processar pedido” em `POST /api/orders/{id}/process/` muda rascunhos ou pedidos aguardando pagamento para `processing` (Em processamento). Exige a permissão `orders.process_order`, atribuída aos perfis Operação e Gestão pelo comando `setup_roles`. Superusuários também têm acesso. A transição é atômica e repetição não duplica o evento. Não confirma pagamento, não cria job de emissão nem consulta a API Vetra. Pedidos em processamento continuam pendentes nos indicadores, fora de receita confirmada e da fila de emissões.
+
+“Cancelar pedido” fica no topo dos detalhes, pede motivo e registra operador e data. O cancelamento aceita rascunho, aguardando pagamento e processamento interno; pedidos pagos ou emitidos mantêm o fluxo específico de conciliação. Filtros incluem Em processamento.
+
+Após atualizar: `manage.py migrate`, `manage.py setup_roles`, build do frontend, `manage.py collectstatic --noinput` e reiniciar o backend.
+
+
+## Parcelas e juros (somente superusuários)
+
+A dashboard exibe “Parcelas e juros” apenas para superusuários. GET/PUT `/api/settings/installments/` também exige usuário ativo, membro da equipe e superusuário; o grupo Gestão sozinho não concede acesso. Alterações usam a sessão com CSRF, validação de 1 a 24 parcelas, taxa decimal de 0 a 100%, pelo menos uma opção ativa, histórico com ator e controle de versão para evitar sobrescrever outro administrador.
+
+A taxa representa acréscimo total sobre o valor da compra para aquela quantidade de parcelas, não juros mensais ou compostos. Exemplo: R$ 1.000 em 3x com 2% resulta em R$ 1.020 no total e 3 parcelas de R$ 340. O simulador mostra uma única expressão, como “3x de R$ 340,00”, com os juros incluídos. O total é preservado; eventuais diferenças de centavos ficam para ajuste na cobrança. O padrão inicial mantém somente 1x ativa e nenhuma taxa; nenhum pedido antigo é alterado.
+
+Estas configurações ficam armazenadas para a integração futura do gateway. Não modificam a tarifa da seguradora, não cobram juros automaticamente, não confirmam pagamentos e não emitem apólices.
+
+
+### Desconto Pix
+
+A primeira linha da configuração é Pix com desconto. O superusuário pode ativar o desconto e informar um percentual de 0 a 100%, com até duas casas decimais. O simulador calcula o desconto sobre o valor da compra, arredonda o desconto em centavos (HALF_UP) e subtrai do total. Exemplo: R$ 1.000 com 5% resulta em desconto de R$ 50 e total de R$ 950. Ativar a regra não gera cobranças nem altera pedidos existentes. As opções de cartão são preservadas.
+
+
+## Tags de status e exclusão lógica
+
+A lista usa botões de status com seleção única e filtro Excluídos. “Todos” e os relatórios/indicadores sem filtro não incluem pedidos excluídos. GET com status=deleted consulta o arquivo de excluídos; detalhes por ID continuam disponíveis com as permissões e escopo originais.
+
+POST /api/orders/{id}/exclude/ exige a permissão Django orders.delete_order (superusuários já possuem) e motivo de 5 a 150 caracteres. A exclusão é lógica, atômica e idempotente: salva status=deleted, status_before_deletion e evento com operador e motivo, sem remover passageiros ou valores. Não cancela pagamentos ou apólices. Não há DELETE físico nem alteração automática dos perfis existentes.
+
+
+## Cupons de desconto
+
+Superusuários podem criar, editar, ativar e desativar códigos no menu Cupons. Códigos são normalizados em maiúsculas e aceitam letras, números, hífen e sublinhado (3 a 32 caracteres). O desconto percentual vai de 0,01% a 100%; sem limite de uso nesta etapa, um cupom por pedido. Alterações são auditadas com operador e versão.
+
+A aplicação no checkout passa pelo servidor B2C, que recota o plano e solicita validação ao backend por token exclusivo. A criação do pedido revalida o cupom sob bloqueio e rejeita mudanças no desconto/total até nova revisão. O pedido mantém subtotal, código, percentual e desconto históricos, além da tarifa original e do câmbio. Valores individuais são rateados sobre o total final, preservando centavos. Pedidos anteriores não são recalculados. Reenvios idempotentes retornam o desconto já salvo, mesmo se o cupom for editado ou desativado depois. Sem gateway, o desconto afeta o valor registrado, sem iniciar cobrança.

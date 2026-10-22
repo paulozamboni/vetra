@@ -88,3 +88,47 @@ class CheckoutTests(TestCase):
         del self.payload['order']['exchange_id']
         self.assertEqual(self.send().status_code,400)
         self.assertEqual(Order.objects.count(),0)
+
+    def test_payer_email_is_saved_for_pix_and_card(self):
+        from .serializers import OrderDetailSerializer
+        for method in ('pix', 'card'):
+            with self.subTest(method=method):
+                self.payload['request_id'] = str(uuid.uuid4())
+                self.payload['order'].update(payment_method=method, payer_email='pagador@example.invalid')
+                response = self.send()
+                self.assertEqual(response.status_code, 201, response.data)
+                order = Order.objects.get(reference=response.data['reference'])
+                self.assertEqual(order.customer_email, 'checkout@example.invalid')
+                self.assertEqual(order.payer_email, 'pagador@example.invalid')
+                self.assertEqual(OrderDetailSerializer(order).data['payer_email'], 'pagador@example.invalid')
+                self.assertEqual(self.send().status_code, 200)
+        self.assertEqual(Order.objects.count(), 2)
+
+    def test_invalid_payer_email_is_rejected(self):
+        self.payload['order']['payer_email'] = 'email-invalido'
+        self.assertEqual(self.send().status_code, 400)
+        self.assertEqual(Order.objects.count(), 0)
+
+    def test_retry_cannot_replace_payer_email(self):
+        self.payload['order']['payer_email'] = 'pagador@example.invalid'
+        self.assertEqual(self.send().status_code, 201)
+        self.payload['order']['payer_email'] = 'outro@example.invalid'
+        self.assertEqual(self.send().status_code, 409)
+        self.assertEqual(Order.objects.get().payer_email, 'pagador@example.invalid')
+
+    def test_customer_phone_saved_and_normalized_in_order(self):
+        from .serializers import OrderDetailSerializer
+        self.payload['order']['customer_phone'] = '+55 (11) 99999-1234'
+        response = self.send()
+        self.assertEqual(response.status_code, 201, response.data)
+        order = Order.objects.get()
+        self.assertEqual(order.customer_phone, '+5511999991234')
+        self.assertEqual(OrderDetailSerializer(order).data['customer_phone'], '+5511999991234')
+        self.payload['order']['customer_phone'] = '+5511999991234'
+        self.assertEqual(self.send().status_code, 200)
+
+    def test_invalid_customer_phone_never_creates_order(self):
+        for phone in ('123', 'abc11999991234', '+1234567890123456'):
+            self.payload['order']['customer_phone'] = phone
+            self.assertEqual(self.send().status_code, 400)
+        self.assertEqual(Order.objects.count(), 0)

@@ -8,5 +8,5 @@ class OrderAccess(BasePermission):
         if not user.has_perm("orders.view_order"):
             return False
         action = getattr(view, "action", "")
-        permission = {"create": "orders.add_order", "cancel": "orders.cancel_order", "export": "orders.export_orders"}.get(action)
+        permission = {"create": "orders.add_order", "cancel": "orders.cancel_order", "process": "orders.process_order", "export": "orders.export_orders", "soft_delete": "orders.delete_order"}.get(action)
         return not permission or user.has_perm(permission)

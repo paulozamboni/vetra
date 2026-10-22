@@ -2,9 +2,9 @@ import assert from 'node:assert/strict';
 import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import ts from 'typescript';
 mkdirSync('.sites-runtime/orders-tests',{recursive:true});
-for(const name of ['quote-contract','payment-fields','order-contract','server-env','currency','vetra-api']){
+for(const name of ['quote-contract','contact','operations-base','payment-fields','order-contract','server-env','currency','vetra-api']){
   let source=readFileSync('lib/'+name+'.ts','utf8');
-  for(const dependency of ['quote-contract','payment-fields','server-env','currency'])source=source.replaceAll("'./"+dependency+"'","'./"+dependency+".mjs'");
+  for(const dependency of ['quote-contract','contact','payment-fields','server-env','currency'])source=source.replaceAll("'./"+dependency+"'","'./"+dependency+".mjs'");
   writeFileSync('.sites-runtime/orders-tests/'+name+'.mjs',ts.transpileModule(source,{compilerOptions:{module:ts.ModuleKind.ESNext,target:ts.ScriptTarget.ES2022}}).outputText);
 }
 let route=readFileSync('app/api/orders/route.ts','utf8');
@@ -12,12 +12,17 @@ for(const dependency of ['order-contract','vetra-api','server-env'])route=route.
 writeFileSync('.sites-runtime/orders-tests/route.mjs',ts.transpileModule(route,{compilerOptions:{module:ts.ModuleKind.ESNext,target:ts.ScriptTarget.ES2022}}).outputText);
 const {POST}=await import('../.sites-runtime/orders-tests/route.mjs');
 const {allocateOrderTotal}=await import('../.sites-runtime/orders-tests/order-contract.mjs');
+let couponRoute=readFileSync('app/api/coupons/route.ts','utf8');
+for(const name of ['quote-contract','vetra-api','server-env','operations-base'])couponRoute=couponRoute.replaceAll("'@/lib/"+name+"'","'./"+name+".mjs'");
+writeFileSync('.sites-runtime/orders-tests/coupon-route.mjs',ts.transpileModule(couponRoute,{compilerOptions:{module:ts.ModuleKind.ESNext,target:ts.ScriptTarget.ES2022}}).outputText);
+const {POST:applyCoupon}=await import('../.sites-runtime/orders-tests/coupon-route.mjs');
+
 assert.deepEqual(allocateOrderTotal(100,3),['33.34','33.33','33.33']);
 process.env.VETRA_API_LOGIN='test';process.env.VETRA_API_PASSWORD='test';
 process.env.VETRA_OPERATIONS_URL='http://127.0.0.1:8080';process.env.VETRA_OPERATIONS_TOKEN='scoped-test-token';
 delete process.env.VETRA_QUOTE_CURRENCY;
 const day=new Date(Date.now()+86400000).toISOString().slice(0,10);
-const input={requestId:'031717d0-45e4-4d6f-8110-a45c09310b46',input:{destinationId:30,departure:day,returnDate:day,ages:[22],tripTypeId:1},planId:240,expectedTotal:644.41,currency:'BRL',customer:{name:'Cliente Teste',email:'teste@example.invalid'},paymentMethod:'card',passengers:[{name:'Passageiro Teste',cpf:'52998224725',age:22}]};
+const input={requestId:'031717d0-45e4-4d6f-8110-a45c09310b46',input:{destinationId:30,departure:day,returnDate:day,ages:[22],tripTypeId:1},planId:240,expectedTotal:644.41,currency:'BRL',customer:{name:'Cliente Teste',email:'teste@example.invalid',phone:'(11) 99999-1234'},payerEmail:'pagador@example.invalid',paymentMethod:'card',passengers:[{name:'Passageiro Teste',cpf:'52998224725',age:22}]};
 let creates=0;
 globalThis.fetch=async(url,options)=>{
   url=String(url);
@@ -26,18 +31,36 @@ globalThis.fetch=async(url,options)=>{
   if(url.includes('destino-categoria'))return Response.json({data:[{id:30,nome:'Europa'}]});
   if(url.includes('viagem-tipo'))return Response.json({data:[{id:1,nome:'Lazer'}]});
   if(url.includes('/cotacao?'))return Response.json({data:{id:99,vigencia:1,vigencia_inicio:day,vigencia_fim:day,empresa:{id:1418},passageiros:[{}],planos:[{id:101,tarifa:123.45,plano:{id:240,nome:'PLANO VALIDADO',coberturas_na_cotacao:[]}}]}});
+  if(url.endsWith('/api/checkout/coupons/validate/')){
+    assert.equal(options.headers.Authorization,'Bearer scoped-test-token');
+    const data=JSON.parse(options.body);assert.equal(data.subtotal,'644.41');
+    if(data.code!=='VIAJE10')return Response.json({error:'Cupom inválido ou inativo.'},{status:409});
+    return Response.json({code:'VIAJE10',percent:'10.00',subtotal:'644.41',discount:'64.44',total:'579.97',currency:'BRL'});
+  }
   assert.equal(url,new URL('/api/checkout/orders/',process.env.VETRA_OPERATIONS_URL).href);
   if(url.includes('operations:8080'))assert.equal(options.headers['X-Forwarded-Proto'],'https');
   assert.equal(options.headers.Authorization,'Bearer scoped-test-token');
-  const body=JSON.parse(options.body);assert.equal(body.order.plan_name,'PLANO VALIDADO');assert.equal(body.order.currency,'BRL');assert.equal(body.order.passengers[0].unit_price,'644.41');assert(!('status' in body.order));assert(!('card' in body.order));creates++;
-  return Response.json({reference:'VT-123456789ABC',status:'awaiting_payment',total:'644.41',currency:'BRL'},{status:201});
+  const body=JSON.parse(options.body);if(body.coupon_code&&body.expected_total!=='579.97')return Response.json({error:'O desconto do cupom mudou. Aplique o cupom novamente.'},{status:409});assert.equal(body.order.plan_name,'PLANO VALIDADO');assert.equal(body.order.currency,'BRL');assert.equal(body.order.payer_email,'pagador@example.invalid');assert.equal(body.order.customer_phone,'11999991234');assert.equal(body.order.passengers[0].unit_price,'644.41');assert(!('status' in body.order));assert(!('card' in body.order));creates++;
+  return Response.json({reference:'VT-123456789ABC',status:'awaiting_payment',total:body.coupon_code?'579.97':'644.41',currency:'BRL'},{status:201});
 };
 const request=(body,origin='http://localhost:5173')=>new Request('http://localhost:5173/api/orders',{method:'POST',headers:{'Content-Type':'application/json',origin},body:JSON.stringify(body)});
 assert.equal((await POST(request(input,'https://elsewhere.test'))).status,403);
 assert.equal((await POST(request({...input,cardNumber:'4111111111111111'}))).status,400);
 assert.equal((await POST(request({...input,expectedTotal:1}))).status,409);
+assert.equal((await POST(request({...input,payerEmail:''}))).status,400);
+assert.equal((await POST(request({...input,payerEmail:'email-invalido'}))).status,400);
+assert.equal((await POST(request({...input,customer:{...input.customer,phone:'123'}}))).status,400);
+assert.equal((await POST(request({...input,customer:{...input.customer,phone:'telefone-invalido'}}))).status,400);
 assert.equal(creates,0);
 const response=await POST(request(input));assert.equal(response.status,201);assert.equal((await response.json()).status,'awaiting_payment');assert.equal(creates,1);
+assert.equal((await POST(request({...input,paymentMethod:'pix'}))).status,201);
+const couponRequest=(code,expectedTotal=input.expectedTotal)=>new Request('http://localhost:5173/api/coupons',{method:'POST',headers:{'Content-Type':'application/json',origin:'http://localhost:5173'},body:JSON.stringify({code,input:input.input,planId:input.planId,expectedTotal})});
+const previewResponse=await applyCoupon(couponRequest('viaje10'));assert.equal(previewResponse.status,200);assert.equal((await previewResponse.json()).total,'579.97');
+assert.equal((await applyCoupon(couponRequest('UNKNOWN'))).status,409);
+assert.equal((await applyCoupon(couponRequest('VIAJE10',1))).status,409);
+assert.equal((await POST(request({...input,couponCode:'VIAJE10',expectedDiscountedTotal:579.97}))).status,201);
+assert.equal((await POST(request({...input,couponCode:'VIAJE10',expectedDiscountedTotal:1}))).status,409);
+
 process.env.VETRA_OPERATIONS_URL='http://operations:8080';
 assert.equal((await POST(request(input))).status,503);
 process.env.VETRA_DEPLOY_TARGET='node';

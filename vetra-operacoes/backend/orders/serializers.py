@@ -34,7 +34,15 @@ class OrderCreateSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Order
-        fields = ["customer_name", "customer_email", "destination", "plan_name", "plan_id", "vetra_quote_id", "vetra_quote_plan_id", "departure", "return_date", "currency", "original_total", "original_currency", "exchange_rate", "exchange_date", "exchange_id", "exchange_field", "exchange_fetched_at", "payment_method", "passengers"]
+        fields = ["customer_name", "customer_email", "customer_phone", "payer_email", "destination", "plan_name", "plan_id", "vetra_quote_id", "vetra_quote_plan_id", "departure", "return_date", "currency", "original_total", "original_currency", "exchange_rate", "exchange_date", "exchange_id", "exchange_field", "exchange_fetched_at", "payment_method", "passengers"]
+
+    def validate_customer_phone(self, value):
+        if not value:
+            return value
+        digits = re.sub(r"\D", "", value)
+        if not re.fullmatch(r"\+?[0-9().\-\s]+", value) or not 10 <= len(digits) <= 15:
+            raise serializers.ValidationError("Informe um telefone com DDD, de 10 a 15 dígitos.")
+        return ("+" if value.startswith("+") else "") + digits
 
     def validate(self, attrs):
         if attrs["departure"] < timezone.localdate():
@@ -93,7 +101,7 @@ class OrderSerializer(serializers.ModelSerializer):
         return obj.passengers.count()
     class Meta:
         model = Order
-        fields = ["id", "reference", "customer_name", "customer_email", "destination", "plan_name", "plan_id", "departure", "return_date", "currency", "total", "original_total", "original_currency", "exchange_rate", "exchange_date", "exchange_id", "exchange_field", "exchange_fetched_at", "payment_method", "status", "status_label", "passenger_count", "source", "is_demo", "created_at", "updated_at"]
+        fields = ["id", "reference", "customer_name", "customer_email", "customer_phone", "payer_email", "destination", "plan_name", "plan_id", "departure", "return_date", "currency", "total", "subtotal", "coupon_code", "coupon_percent", "coupon_discount", "pix_discount_percent", "pix_discount_amount", "installment_count", "installment_interest_percent", "installment_interest_amount", "original_total", "original_currency", "exchange_rate", "exchange_date", "exchange_id", "exchange_field", "exchange_fetched_at", "payment_method", "status", "status_label", "status_before_deletion", "passenger_count", "source", "is_demo", "created_at", "updated_at"]
 
 class OrderDetailSerializer(OrderSerializer):
     passengers = PassengerSerializer(many=True, read_only=True)

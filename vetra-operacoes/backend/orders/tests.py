@@ -161,3 +161,126 @@ class OperationsTests(TestCase):
         self.assertEqual(client.post("/api/orders/", self.payload, format="json").status_code, 403)
         token = login_response.data["csrfToken"]
         self.assertEqual(client.post("/api/orders/", self.payload, format="json", HTTP_X_CSRFTOKEN=token).status_code, 201)
+
+    def test_cancel_requires_permission_reason_and_keeps_financial_values(self):
+        order = self.create_order()
+        url = f"/api/orders/{order.id}/cancel/"
+        self.client.force_authenticate(self.finance)
+        self.assertEqual(self.client.post(url, {"reason": "Solicitado pelo cliente."}, format="json").status_code, 403)
+        self.client.force_authenticate(self.manager)
+        self.assertEqual(self.client.post(url, {"reason": ""}, format="json").status_code, 400)
+        order.refresh_from_db()
+        self.assertEqual(order.status, Order.Status.DRAFT)
+        result = self.client.post(url, {"reason": "Solicitado pelo cliente."}, format="json")
+        self.assertEqual(result.status_code, 200)
+        order.refresh_from_db()
+        self.assertEqual(order.total, Decimal("150.25"))
+        self.assertEqual(order.status, Order.Status.CANCELLED)
+        self.assertEqual(self.client.post(url, {"reason": "Solicitado novamente."}, format="json").status_code, 409)
+        self.assertEqual(order.events.filter(action="cancelled").count(), 1)
+
+    def test_process_is_internal_audited_and_idempotent(self):
+        order = self.create_order()
+        order.status = Order.Status.AWAITING_PAYMENT
+        order.save()
+        url = f"/api/orders/{order.id}/process/"
+        result = self.client.post(url, {}, format="json")
+        self.assertEqual(result.status_code, 200)
+        order.refresh_from_db()
+        self.assertEqual(order.status, Order.Status.PROCESSING)
+        self.assertEqual(order.total, Decimal("150.25"))
+        self.assertEqual(order.payment_method, "pix")
+        self.assertEqual(result.data["status_label"], "Em processamento")
+        self.assertEqual(order.events.get(action="processing_started").actor, self.manager)
+        self.assertFalse(ProcessingJob.objects.filter(order=order).exists())
+        self.assertEqual(self.client.post(url, {}, format="json").status_code, 200)
+        self.assertEqual(order.events.filter(action="processing_started").count(), 1)
+        summary = self.client.get("/api/summary/").data
+        self.assertEqual(summary["pending"], 1)
+        self.assertEqual(summary["confirmed"], 0)
+        self.assertEqual(summary["revenue"], [])
+        self.assertEqual(self.client.get("/api/orders/?status=processing").data["count"], 1)
+        self.assertEqual(self.client.get("/api/orders/?processing=1").data["count"], 0)
+        cancelled = self.client.post(f"/api/orders/{order.id}/cancel/", {"reason":"Cliente desistiu durante a análise."}, format="json")
+        self.assertEqual(cancelled.status_code, 200)
+        order.refresh_from_db()
+        self.assertEqual(order.status, Order.Status.CANCELLED)
+
+    def test_process_requires_specific_permission(self):
+        order = self.create_order()
+        self.client.force_authenticate(self.finance)
+        self.assertFalse(self.client.get("/api/session/").data["user"]["can_process"])
+        self.assertEqual(self.client.post(f"/api/orders/{order.id}/process/", {}, format="json").status_code, 403)
+        order.refresh_from_db()
+        self.assertEqual(order.status, Order.Status.DRAFT)
+        self.assertEqual(order.events.count(), 1)
+
+    def test_process_rejects_financial_or_closed_states(self):
+        order = self.create_order()
+        for state in (Order.Status.CANCELLED, Order.Status.PAID, Order.Status.ISSUING, Order.Status.ISSUED, Order.Status.FAILED):
+            order.status = state
+            order.save()
+            self.assertEqual(self.client.post(f"/api/orders/{order.id}/process/", {}, format="json").status_code, 409)
+            order.refresh_from_db()
+            self.assertEqual(order.status, state)
+        self.assertEqual(order.events.count(), 1)
+
+    @override_settings(DEBUG=True)
+    def test_process_respects_real_demo_scope(self):
+        demo = self.create_order("demo")
+        self.assertEqual(self.client.post(f"/api/orders/{demo.id}/process/", {}, format="json").status_code, 404)
+        self.assertEqual(self.client.post(f"/api/orders/{demo.id}/process/?scope=demo", {}, format="json").status_code, 200)
+
+    def test_soft_delete_preserves_record_and_hides_default_lists(self):
+        order = self.create_order()
+        order.status = Order.Status.PAID
+        order.save()
+        admin = User.objects.create_superuser('delete-admin', 'admin@example.invalid', 'test-only-password')
+        self.client.force_authenticate(admin)
+        url = f"/api/orders/{order.id}/exclude/"
+        response = self.client.post(url, {'reason': 'Pedido duplicado na operação.'}, format='json')
+        self.assertEqual(response.status_code, 200, response.data)
+        order.refresh_from_db()
+        self.assertEqual(order.status, Order.Status.DELETED)
+        self.assertEqual(order.status_before_deletion, Order.Status.PAID)
+        self.assertEqual(order.total, Decimal('150.25'))
+        self.assertEqual(order.passengers.count(), 1)
+        self.assertEqual(order.events.get(action='deleted').actor, admin)
+        self.assertEqual(self.client.get('/api/orders/').data['count'], 0)
+        self.assertEqual(self.client.get('/api/orders/?search='+order.reference).data['count'], 0)
+        self.assertEqual(self.client.get('/api/orders/?status=deleted').data['count'], 1)
+        self.assertEqual(self.client.get('/api/summary/').data['total'], 0)
+        self.assertEqual(self.client.get('/api/summary/?status=deleted').data['total'], 1)
+        self.assertEqual(len(self.client.get('/api/orders/export/').content.decode('utf-8').splitlines()), 1)
+        self.assertEqual(len(self.client.get('/api/orders/export/?status=deleted').content.decode('utf-8').splitlines()), 2)
+        self.assertEqual(self.client.get(f'/api/orders/{order.id}/').data['status_label'], 'Excluído')
+        self.assertEqual(self.client.post(url, {'reason': 'Pedido duplicado na operação.'}, format='json').status_code, 200)
+        self.assertEqual(order.events.filter(action='deleted').count(), 1)
+        self.assertEqual(self.client.post(f'/api/orders/{order.id}/process/', {}, format='json').status_code, 404)
+        self.assertEqual(self.client.post(f'/api/orders/{order.id}/cancel/', {'reason':'Não pode cancelar um excluído.'}, format='json').status_code, 404)
+        self.assertEqual(Order.objects.count(), 1)
+
+    def test_soft_delete_requires_delete_permission_and_reason(self):
+        order = self.create_order()
+        url = f'/api/orders/{order.id}/exclude/'
+        self.assertFalse(self.client.get('/api/session/').data['user']['can_delete'])
+        self.assertEqual(self.client.post(url, {'reason':'Teste de exclusão.'}, format='json').status_code, 403)
+        admin = User.objects.create_superuser('exclude-admin', 'admin@example.invalid', 'test-only-password')
+        self.client.force_authenticate(admin)
+        self.assertTrue(self.client.get('/api/session/').data['user']['can_delete'])
+        for reason in ('', 'abc', 'x'*151, None):
+            self.assertEqual(self.client.post(url, {'reason':reason}, format='json').status_code, 400)
+        order.refresh_from_db()
+        self.assertEqual(order.status, Order.Status.DRAFT)
+        self.assertEqual(order.events.count(), 1)
+        self.assertEqual(self.client.delete(f'/api/orders/{order.id}/').status_code, 405)
+
+    @override_settings(DEBUG=True)
+    def test_soft_delete_respects_demo_scope(self):
+        demo = self.create_order('demo')
+        admin = User.objects.create_superuser('scope-admin', 'admin@example.invalid', 'test-only-password')
+        self.client.force_authenticate(admin)
+        self.assertEqual(self.client.post(f'/api/orders/{demo.id}/exclude/', {'reason':'Demo de exclusão.'}, format='json').status_code, 404)
+        self.assertEqual(self.client.post(f'/api/orders/{demo.id}/exclude/?scope=demo', {'reason':'Demo de exclusão.'}, format='json').status_code, 200)
+        self.assertEqual(self.client.get('/api/orders/?status=deleted').data['count'], 0)
+        self.assertEqual(self.client.get('/api/orders/?scope=demo&status=deleted').data['count'], 1)
