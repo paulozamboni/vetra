@@ -5,6 +5,7 @@ import { quoteSchema, type Quote, type QuoteInput, type QuotedPlan } from '@/lib
 
 import { installmentsResponseSchema } from '@/lib/installment-contract';
 import { paymentPrices, type PaymentTerms } from '@/lib/payment-prices';
+import { LeadSearchCapture } from './lead-search-capture';
 import { CHECKOUT_KEY } from '@/lib/checkout-contract';
 import { PlanDetailsDialog } from '@/components/plan-details-dialog';
 const amount=(value:number)=>new Intl.NumberFormat('pt-BR',{maximumFractionDigits:2}).format(value);
@@ -51,7 +52,7 @@ export function QuoteResults({ summary, input, edited }: { summary:string; input
   const compared=plans.filter(plan=>selected.includes(plan.quotePlanId));
   const rows=Array.from(new Map(compared.flatMap(plan=>plan.coverages.map(c=>[c.id,c.label] as const))).entries());
   return <section className="results-section" aria-labelledby="results-title" aria-busy={loading}>
-    <div className="results-topline"><div><span className="eyebrow">SUA VIAGEM, SUA ESCOLHA</span><h1 id="results-title">Compare a proteção para sua viagem.</h1><p>{summary||'Preencha o cotador acima para consultar os planos.'}</p></div>{quote&&<span className="preview-badge">{plans.length} opções encontradas</span>}</div>
+    {quote&&<LeadSearchCapture offerCapture={quote.plans.some(p=>p.available&&p.price!==null)} key={quote.id} quoteId={String(quote.id)} summary={summary} minQuoteTotal={quote.currency==='BRL'&&quote.plans.some(p=>p.available&&p.price!==null)?Math.min(...quote.plans.filter(p=>p.available&&p.price!==null).map(p=>p.price!)):undefined} travelers={quote.currency==='BRL'&&quote.plans.some(p=>p.available&&p.price!==null)?quote.travelers:undefined}/>}<div className="results-topline"><div><span className="eyebrow">SUA VIAGEM, SUA ESCOLHA</span><h1 id="results-title">Compare a proteção para sua viagem.</h1><p>{summary||'Preencha o cotador acima para consultar os planos.'}</p></div>{quote&&<span className="preview-badge">{plans.length} opções encontradas</span>}</div>
     {loading&&<div className="results-notice" role="status"><LoaderCircle className="loading-spinner"/><p>Consultando os planos para sua viagem…</p></div>}
     {error&&<div className="results-notice" role="alert"><Info/><p>{error}</p><button className="retry-quote" onClick={()=>setAttempt(value=>value+1)}>Tentar novamente</button></div>}
     {!input&&!loading&&<div className="results-notice" role="status"><Info/><p>{edited?'Você alterou a viagem. Clique em atualizar cotação para consultar os novos valores.':'Escolha destino, datas e viajantes para começar.'}</p></div>}

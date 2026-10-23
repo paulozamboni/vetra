@@ -42,3 +42,14 @@ urlpatterns.insert(0, path('api/checkout/installments/', CheckoutInstallmentsVie
 urlpatterns.insert(0, path('healthz/', healthz))
 admin.site.site_title = "Vetra"
 admin.site.index_title = "Equipe e permissões"
+
+from orders.leads import CaptureLeadView, LeadListView, LeadExportView, LeadDeleteView, LeadSearchView, LeadHistoryView
+urlpatterns.insert(0, path('api/checkout/leads/', CaptureLeadView.as_view()))
+urlpatterns.insert(0, path('api/leads/', LeadListView.as_view()))
+
+urlpatterns.insert(0, path('api/leads/export/', LeadExportView.as_view()))
+
+urlpatterns.insert(0, path('api/leads/<int:pk>/delete/', LeadDeleteView.as_view()))
+urlpatterns.insert(0, path('api/checkout/lead-searches/', LeadSearchView.as_view()))
+
+urlpatterns.insert(0, path('api/leads/<int:pk>/history/', LeadHistoryView.as_view()))

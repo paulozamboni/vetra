@@ -149,3 +149,53 @@ class CouponEvent(models.Model):
     actor = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, on_delete=models.SET_NULL)
     snapshot = models.JSONField()
     created_at = models.DateTimeField(auto_now_add=True)
+
+
+class LeadGroupingState(models.Model):
+    # A singleton row serializes merges, including simultaneous captures.
+    id = models.PositiveSmallIntegerField(primary_key=True, default=1, editable=False)
+
+
+class Lead(models.Model):
+    deleted_at = models.DateTimeField(null=True, blank=True)
+    group_key = models.UUIDField(default=uuid.uuid4, db_index=True, editable=False)
+    email_key = models.CharField(max_length=254, db_index=True, editable=False, default='')
+    phone_key = models.CharField(max_length=25, db_index=True, editable=False, default='')
+    capture_key = models.UUIDField(unique=True, editable=False)
+    capture_hash = models.CharField(max_length=64, editable=False)
+    name = models.CharField(max_length=150)
+    email = models.EmailField(max_length=254)
+    phone = models.CharField(max_length=25)
+    quote_id = models.CharField(max_length=80, blank=True)
+    trip_summary = models.CharField(max_length=500, blank=True)
+    min_quote_total = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True)
+    traveler_count = models.PositiveSmallIntegerField(null=True, blank=True)
+    min_ticket_pix = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True)
+    pix_discount_percent = models.DecimalField(max_digits=5, decimal_places=2, null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True, db_index=True)
+
+    def save(self, *args, **kwargs):
+        from .lead_contacts import email_key, phone_key
+        self.email_key = email_key(self.email)
+        self.phone_key = phone_key(self.phone)
+        super().save(*args, **kwargs)
+
+    class Meta:
+        ordering = ['-created_at', '-id']
+        verbose_name = 'lead'
+        verbose_name_plural = 'leads'
+
+
+class LeadVisitor(models.Model):
+    id = models.UUIDField(primary_key=True, editable=False)
+    group_key = models.UUIDField(null=True, blank=True, db_index=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+
+class LeadSearch(models.Model):
+    request_key = models.UUIDField(unique=True, editable=False)
+    visitor = models.ForeignKey(LeadVisitor, on_delete=models.CASCADE, related_name='searches')
+    quote_id = models.CharField(max_length=80, blank=True)
+    trip_summary = models.CharField(max_length=500, blank=True)
+    min_ticket_pix = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True, db_index=True)

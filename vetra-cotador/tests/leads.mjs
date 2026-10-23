@@ -1,0 +1,64 @@
+import assert from 'node:assert/strict';
+import {readFileSync,writeFileSync,mkdirSync} from 'node:fs';
+import ts from 'typescript';
+const folder='.sites-runtime/leads-tests';mkdirSync(folder,{recursive:true});
+for(const name of ['contact','lead-contract','operations-base','server-env','lead-cookies']){
+ let source=readFileSync('lib/'+name+'.ts','utf8').replaceAll("'./contact'","'./contact.mjs'");
+ writeFileSync(folder+'/'+name+'.mjs',ts.transpileModule(source,{compilerOptions:{module:ts.ModuleKind.ESNext,target:ts.ScriptTarget.ES2022}}).outputText);
+}
+let source=readFileSync('app/api/leads/route.ts','utf8');
+for(const name of ['lead-contract','operations-base','server-env','lead-cookies'])source=source.replaceAll("'@/lib/"+name+"'","'./"+name+".mjs'");
+writeFileSync(folder+'/route.mjs',ts.transpileModule(source,{compilerOptions:{module:ts.ModuleKind.ESNext,target:ts.ScriptTarget.ES2022}}).outputText);
+const {POST}=await import('../.sites-runtime/leads-tests/route.mjs');
+process.env.VETRA_OPERATIONS_URL='http://127.0.0.1:8080';process.env.VETRA_OPERATIONS_TOKEN='scoped-test-token';
+const input={requestId:'031717d0-45e4-4d6f-8110-a45c09310b46',name:'Ana',email:'lead@example.invalid',phone:'(11) 99999-1234',quoteId:'123',summary:'Europa',minQuoteTotal:401.60,travelers:2};
+let calls=0;
+globalThis.fetch=async(url,options)=>{calls++;assert.equal(String(url),'http://127.0.0.1:8080/api/checkout/leads/');assert.equal(options.headers.Authorization,'Bearer scoped-test-token');const payload=JSON.parse(options.body);assert.equal(payload.phone,'11999991234');assert.equal(payload.request_id,input.requestId);assert.equal(payload.min_quote_total,'401.60');assert.equal(payload.traveler_count,2);return Response.json({received:true},{status:201});};
+const request=(body=input,origin='http://localhost:5175')=>new Request('http://localhost:5175/api/leads',{method:'POST',headers:{origin,'Content-Type':'application/json'},body:JSON.stringify(body)});
+assert.equal((await POST(request())).status,201);assert.equal(calls,1);
+assert.equal((await POST(request(input,'https://foreign.invalid'))).status,403);
+assert.equal((await POST(request({...input,phone:'123'}))).status,400);
+assert.equal((await POST(request({...input,email:'bad'}))).status,400);
+assert.equal((await POST(request({...input,name:'   '}))).status,400);
+assert.equal((await POST(request({...input,unexpected:'data'}))).status,400);
+assert.equal(calls,1);
+globalThis.fetch=async()=>Response.json({error:'failure'},{status:503});
+assert.equal((await POST(request())).status,503);
+console.log('Lead capture: origin, contact validation, scoped token, normalization and failure handling passed.');
+
+const {maskPhone,normalizePhone}=await import('../.sites-runtime/leads-tests/contact.mjs');
+assert.equal(maskPhone('31984366722'),'(31) 98436-6722');
+assert.equal(maskPhone('3134366722'),'(31) 3436-6722');
+assert.equal(maskPhone('+5531984366722'),'+55 (31) 98436-6722');
+assert.equal(maskPhone('5531984366722'),'+55 (31) 98436-6722');
+assert.equal(maskPhone('+14155552671'),'+14155552671');
+assert.equal(maskPhone(''),'');
+assert.equal(normalizePhone(maskPhone('31984366722')),'31984366722');
+
+let searchSource=readFileSync('app/api/leads/searches/route.ts','utf8');
+for(const name of ['operations-base','server-env','lead-cookies'])searchSource=searchSource.replaceAll("'@/lib/"+name+"'","'./"+name+".mjs'");
+writeFileSync(folder+'/search-route.mjs',ts.transpileModule(searchSource,{compilerOptions:{module:ts.ModuleKind.ESNext,target:ts.ScriptTarget.ES2022}}).outputText);
+const {POST:trackSearch}=await import('../.sites-runtime/leads-tests/search-route.mjs');
+let visitorId='',knownLead=false;
+globalThis.fetch=async(url,options)=>{assert.equal(String(url),'http://127.0.0.1:8080/api/checkout/lead-searches/');visitorId=JSON.parse(options.body).visitor_id;return Response.json({received:true,known_lead:knownLead},{status:201});};
+const searchRequest=(cookie='')=>new Request('http://localhost:5175/api/leads/searches',{method:'POST',headers:{origin:'http://localhost:5175','Content-Type':'application/json',cookie},body:JSON.stringify({requestId:crypto.randomUUID(),quoteId:'123',summary:'Europa',minQuoteTotal:100,travelers:1,offerCapture:true})});
+const firstSearch=await trackSearch(searchRequest());
+assert.equal((await firstSearch.json()).showCapture,true);
+const setCookies=firstSearch.headers.getSetCookie();
+assert(setCookies.some(v=>v.startsWith('vetra_lead_visitor=')));
+assert(setCookies.every(v=>v.includes('HttpOnly')&&v.includes('SameSite=Lax')));
+const cookie=setCookies.map(v=>v.split(';')[0]).join('; ');
+const firstVisitor=visitorId;
+knownLead=true;
+const secondSearch=await trackSearch(searchRequest(cookie));
+assert.equal((await secondSearch.json()).showCapture,false);
+assert.equal(visitorId,firstVisitor);
+console.log('Lead visitor: persistent cookie, one-time modal and stable visitor passed.');
+
+knownLead=false;
+const orphanSearch=await trackSearch(searchRequest(cookie+'; vetra_lead_seen=1'));
+assert.equal((await orphanSearch.json()).showCapture,true);
+globalThis.fetch=async()=>Response.json({error:'offline'},{status:503});
+const offlineSearch=await trackSearch(searchRequest());
+assert.equal((await offlineSearch.json()).showCapture,true);
+console.log('Lead visitor: known contacts skip modal; missing or orphaned cookies show capture.');

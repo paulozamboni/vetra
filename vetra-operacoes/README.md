@@ -146,3 +146,25 @@ POST /api/orders/{id}/exclude/ exige a permissão Django orders.delete_order (su
 Superusuários podem criar, editar, ativar e desativar códigos no menu Cupons. Códigos são normalizados em maiúsculas e aceitam letras, números, hífen e sublinhado (3 a 32 caracteres). O desconto percentual vai de 0,01% a 100%; sem limite de uso nesta etapa, um cupom por pedido. Alterações são auditadas com operador e versão.
 
 A aplicação no checkout passa pelo servidor B2C, que recota o plano e solicita validação ao backend por token exclusivo. A criação do pedido revalida o cupom sob bloqueio e rejeita mudanças no desconto/total até nova revisão. O pedido mantém subtotal, código, percentual e desconto históricos, além da tarifa original e do câmbio. Valores individuais são rateados sobre o total final, preservando centavos. Pedidos anteriores não são recalculados. Reenvios idempotentes retornam o desconto já salvo, mesmo se o cupom for editado ou desativado depois. Sem gateway, o desconto afeta o valor registrado, sem iniciar cobrança.
+
+
+## Leads capturados
+
+A migração 0015 cria Lead com contato, referência/resumo da cotação, chave idempotente e horário de captura. POST /api/checkout/leads/ exige o token privado do cotador; não retorna dados pessoais. GET /api/leads/ exige orders.view_lead, conta ativa e staff. setup_roles concede essa permissão a Operação e Gestão; superusuários também acessam. A seção Leads exibe 50 registros por página, recentes primeiro, com filtros start/end inclusivos pela data de captura no fuso configurado (America/Sao_Paulo). Não há envio de e-mail, mensagem ou ligação automática.
+
+O lead agora registra o menor total de plano disponível, quantidade de viajantes e ticket mínimo no Pix por viajante. O backend aplica o desconto Pix vigente ao total informado pela consulta, arredonda em centavos e divide pelos viajantes. É uma estimativa média do grupo, não uma tarifa por idade. A referência fica congelada na captura; leads antigos sem esse registro mostram Não registrado. Migração 0016.
+
+
+### Contatos agrupados e exportação
+
+A migração 0017 agrupa as capturas existentes por e-mail sem diferença de maiúsculas ou telefone normalizado, inclusive com/sem +55. Capturas continuam preservadas; um identificador comum permite uniões transitivas e futuras capturas são serializadas em uma transação para evitar grupos concorrentes. A lista exibe o nome e contato mais recentes, a contagem de capturas e o menor ticket Pix por viajante já registrado. O filtro de datas considera a última captura do contato. A paginação conta contatos únicos, 50 por página. GET /api/leads/export/ usa a mesma permissão e período e exporta todos os contatos filtrados em CSV UTF-8, com BOM, separador ponto e vírgula e neutralização de fórmulas.
+
+
+### Pesquisas, cookie e exclusão
+
+A migração 0018 adiciona visitantes e pesquisas idempotentes. Cada resultado carregado é registrado por POST /api/checkout/lead-searches/, restrito ao token do cotador. A captura associa o visitante ao contato; uniões de contatos unem os visitantes. A dash e o CSV mostram quantidade de pesquisas e a dash mostra o horário da última. Pesquisas posteriores também podem reduzir o menor ticket Pix registrado. Não se inferem pesquisas anteriores à implantação. POST /api/leads/{id}/delete/ exige orders.delete_lead e CSRF; exclui o grupo da listagem e exportação, preservando os registros internos. A exclusão fica disponível ao superusuário; não foram concedidas novas permissões de exclusão aos grupos da equipe. Uma nova captura do contato, manual ou reconhecida pelo cookie, reativa o grupo excluído.
+
+Pesquisas de visitantes reconhecidos registram uma nova captura usando nome, e-mail e telefone mais recentes do grupo, atualizam a viagem e o preço mínimo informado e reativam o contato caso tenha sido excluído. A operação é transacional e idempotente por pesquisa; o backend informa apenas se o contato foi reconhecido, sem devolver os dados pessoais ao navegador.
+
+
+A barra lateral usa vetra-marca-negativa.png, adaptação negativa solicitada pelo usuário: símbolo e assinatura laranja, lettering branco sobre azul. Arquivo de referência: vetra-marca-oficial.png. Login e carregamento mantêm a versão positiva em fundo claro. O HTML inclui favicon PNG e apple-touch-icon usando vetra-icon.png.

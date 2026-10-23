@@ -84,3 +84,13 @@ O checkout exige telefone com 10 a 15 dígitos (DDD e código do país opcional)
 ## Cupons no pagamento
 
 O resumo do checkout contém Aplicar/remover cupom. A rota POST /api/coupons valida origem e recota o plano no servidor antes de obter o desconto do backend. Ao mudar idades, plano ou valor, o cupom aplicado é removido e precisa ser revalidado. A gravação envia o código e o total com desconto para conferência final no Django. O total confirmado aparece no recibo; o dashboard mostra o subtotal, cupom e desconto separadamente. Códigos inválidos/inativos não alteram o valor, e falhas de validação não são tratadas como desconto zero silencioso. Gestão em Cupons é exclusiva para superusuários.
+
+
+## Captura de leads nos resultados
+
+Ao carregar uma cotação com planos disponíveis, abre um modal opcional de nome, e-mail e telefone. Fechar continua a navegação sem gravar; Salvar meus dados envia POST /api/leads. A rota valida origem, contato e limites e usa o token privado de ingestão para POST /api/checkout/leads/. UUID por envio permite repetir sem duplicar. Dados não são gravados no armazenamento do navegador. Nova cotação abre um novo convite; nenhuma mensagem externa é enviada. Teste: node --test tests/leads.mjs.
+
+
+### Modal único e pesquisas por navegador
+
+O componente LeadSearchCapture registra uma consulta por cotação carregada em POST /api/leads/searches. Cookies vetra_lead_visitor e vetra_lead_seen duram 180 dias, são HttpOnly, SameSite=Lax, sem dados pessoais, e usam Secure em HTTPS. O convite é dispensado quando o cookie identifica um contato salvo. Sem cookie ou sem contato associado, ele abre novamente; apenas a marca de convite visto não impede o cadastro. Ao salvar, o servidor associa o visitante ao lead. Pesquisas sem cadastro permanecem anônimas até essa associação. Nenhuma mensagem externa é enviada.

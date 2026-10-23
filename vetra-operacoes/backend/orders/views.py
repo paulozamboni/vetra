@@ -24,7 +24,7 @@ from .serializers import OrderSerializer, OrderCreateSerializer, OrderDetailSeri
 
 def session_data(request):
     user = request.user
-    return {"user": {"username": user.username, "name": user.get_full_name() or user.username, "can_create": user.has_perm("orders.add_order"), "can_export": user.has_perm("orders.export_orders"), "can_cancel": user.has_perm("orders.cancel_order"), "can_process": user.has_perm("orders.process_order"), "can_delete": user.has_perm("orders.delete_order"), "is_superuser": user.is_superuser} if user.is_authenticated and user.is_staff and user.has_perm("orders.view_order") else None, "csrfToken": get_token(request), "demoAvailable": settings.DEBUG, "processingEnabled": False}
+    return {"user": {"username": user.username, "name": user.get_full_name() or user.username, "can_create": user.has_perm("orders.add_order"), "can_export": user.has_perm("orders.export_orders"), "can_cancel": user.has_perm("orders.cancel_order"), "can_process": user.has_perm("orders.process_order"), "can_delete": user.has_perm("orders.delete_order"), "can_view_leads": user.has_perm("orders.view_lead"), "can_delete_leads": user.has_perm("orders.delete_lead"), "is_superuser": user.is_superuser} if user.is_authenticated and user.is_staff and user.has_perm("orders.view_order") else None, "csrfToken": get_token(request), "demoAvailable": settings.DEBUG, "processingEnabled": False}
 
 @method_decorator(never_cache, name="dispatch")
 class SessionView(APIView):
